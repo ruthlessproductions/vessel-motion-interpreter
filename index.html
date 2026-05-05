@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Avatar Motion Interpreter</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #f5f4f0; color: #1a1a18; padding: 2rem; max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 500; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 1.5rem; }
+  .card { background: white; border: 0.5px solid #e0ded6; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
+  .section-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; font-weight: 500; }
+  .input-group { margin-bottom: 1rem; }
+  textarea { width: 100%; min-height: 80px; resize: vertical; font-family: inherit; font-size: 14px; padding: 10px 12px; border: 0.5px solid #ccc; border-radius: 8px; background: #faf9f7; color: #1a1a18; }
+  textarea:focus { outline: none; border-color: #999; }
+  .tag-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 0.5px solid #ddd; cursor: pointer; color: #666; background: white; user-select: none; }
+  .tag.active { background: #f0eeea; color: #1a1a18; border-color: #aaa; font-weight: 500; }
+  .preset-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1rem; }
+  .preset-btn { font-size: 12px; padding: 5px 12px; border-radius: 20px; border: 0.5px solid #ddd; cursor: pointer; background: white; color: #666; }
+  .preset-btn:hover { background: #f5f4f0; color: #1a1a18; }
+  .run-btn { width: 100%; padding: 10px; font-size: 14px; font-weight: 500; cursor: pointer; border-radius: 8px; border: 0.5px solid #ccc; background: white; color: #1a1a18; margin-top: 4px; }
+  .run-btn:hover { background: #f5f4f0; }
+  .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .output-card { background: #f5f4f0; border: 0.5px solid #e0ded6; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
+  .read-block { font-size: 13px; color: #666; font-style: italic; line-height: 1.6; padding: 8px 0; border-bottom: 0.5px solid #e0ded6; margin-bottom: 8px; }
+  .internal-block { font-size: 13px; color: #1a1a18; line-height: 1.6; padding-bottom: 12px; border-bottom: 0.5px solid #e0ded6; margin-bottom: 4px; }
+  .output-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 0.5px solid #e0ded6; gap: 12px; }
+  .output-row:last-child { border-bottom: none; }
+  .output-label { font-size: 12px; color: #888; flex-shrink: 0; }
+  .output-value { font-size: 13px; color: #1a1a18; text-align: right; }
+  .motion-badge { display: inline-block; font-size: 11px; padding: 3px 8px; border-radius: 20px; background: white; border: 0.5px solid #ddd; font-weight: 500; margin: 2px; font-family: monospace; }
+  .energy-bar { height: 5px; border-radius: 3px; background: #e0ded6; margin-top: 6px; }
+  .energy-fill { height: 100%; border-radius: 3px; background: #888; }
+  .loading { color: #888; font-size: 13px; }
+  .api-key-row { display: flex; gap: 8px; margin-bottom: 4px; }
+  .api-key-row input { flex: 1; padding: 8px 12px; font-size: 13px; border: 0.5px solid #ccc; border-radius: 8px; font-family: monospace; background: #faf9f7; color: #1a1a18; }
+  .api-note { font-size: 11px; color: #aaa; }
+  .error { color: #c0392b; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<h1>Avatar Motion Interpreter</h1>
+<p class="subtitle">Test how Vessel interprets your words and body language — powered by Gemini 2.5 Flash</p>
+
+<div class="card">
+  <div class="section-label">Gemini API Key</div>
+  <div class="api-key-row">
+    <input type="password" id="api-key" placeholder="AIza..." />
+  </div>
+  <p class="api-note">Used only in this browser session. Never shared or stored.</p>
+</div>
+
+<div class="card">
+  <div class="section-label" style="margin-bottom: 10px;">Presets</div>
+  <div class="preset-row">
+    <button class="preset-btn" onclick="loadPreset('excited')">Excited pitch</button>
+    <button class="preset-btn" onclick="loadPreset('doubt')">Expressing doubt</button>
+    <button class="preset-btn" onclick="loadPreset('quiet')">Quiet confession</button>
+    <button class="preset-btn" onclick="loadPreset('challenge')">Challenging idea</button>
+    <button class="preset-btn" onclick="loadPreset('ramble')">Rambling thought</button>
+  </div>
+
+  <div class="input-group">
+    <div class="section-label">What you said</div>
+    <textarea id="transcript" placeholder="e.g. I think this could actually change everything..."></textarea>
+  </div>
+
+  <div class="input-group">
+    <div class="section-label">Vocal tone</div>
+    <div class="tag-grid" id="tone-tags">
+      <span class="tag" onclick="toggleTag(this)">fast</span>
+      <span class="tag" onclick="toggleTag(this)">slow</span>
+      <span class="tag" onclick="toggleTag(this)">excited</span>
+      <span class="tag" onclick="toggleTag(this)">flat</span>
+      <span class="tag" onclick="toggleTag(this)">hushed</span>
+      <span class="tag" onclick="toggleTag(this)">clipped</span>
+      <span class="tag" onclick="toggleTag(this)">wavering</span>
+      <span class="tag" onclick="toggleTag(this)">measured</span>
+    </div>
+  </div>
+
+  <div class="input-group">
+    <div class="section-label">Body signals</div>
+    <div class="tag-grid" id="pose-tags">
+      <span class="tag" onclick="toggleTag(this)">leaning forward</span>
+      <span class="tag" onclick="toggleTag(this)">leaning back</span>
+      <span class="tag" onclick="toggleTag(this)">wide gestures</span>
+      <span class="tag" onclick="toggleTag(this)">minimal movement</span>
+      <span class="tag" onclick="toggleTag(this)">head tilt</span>
+      <span class="tag" onclick="toggleTag(this)">looking away</span>
+      <span class="tag" onclick="toggleTag(this)">pointing</span>
+      <span class="tag" onclick="toggleTag(this)">hands open</span>
+      <span class="tag" onclick="toggleTag(this)">fidgeting</span>
+      <span class="tag" onclick="toggleTag(this)">still</span>
+    </div>
+  </div>
+
+  <button class="run-btn" id="run-btn" onclick="runInterpretation()">Interpret →</button>
+</div>
+
+<div id="output-area"></div>
+
+<script>
+const presets = {
+  excited:   { transcript: "Okay so I've been thinking about this for weeks and I genuinely think we're onto something that nobody has done before — like, the combination alone is new.", tone: ["fast","excited"], pose: ["leaning forward","wide gestures"] },
+  doubt:     { transcript: "I mean... it could work. I just don't know if the timing is right. There are a lot of moving parts.", tone: ["slow","wavering"], pose: ["leaning back","looking away"] },
+  quiet:     { transcript: "Honestly I wasn't sure whether to bring this up, but I think it matters. It's been bothering me.", tone: ["hushed","slow"], pose: ["minimal movement","still"] },
+  challenge: { transcript: "But that assumes the existing model is correct. What if it isn't? What if we're optimizing for the wrong thing entirely?", tone: ["clipped","measured"], pose: ["leaning forward","pointing"] },
+  ramble:    { transcript: "So it started as one thing and then kind of became another thing and now I'm not totally sure what it is but it feels important, does that make sense?", tone: ["fast","wavering"], pose: ["wide gestures","head tilt","fidgeting"] }
+};
+
+function loadPreset(key) {
+  const p = presets[key];
+  document.getElementById('transcript').value = p.transcript;
+  document.querySelectorAll('.tag').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#tone-tags .tag').forEach(t => { if (p.tone.includes(t.textContent)) t.classList.add('active'); });
+  document.querySelectorAll('#pose-tags .tag').forEach(t => { if (p.pose.includes(t.textContent)) t.classList.add('active'); });
+}
+
+function toggleTag(el) { el.classList.toggle('active'); }
+
+function getActiveTags(id) {
+  return Array.from(document.querySelectorAll(`#${id} .tag.active`)).map(t => t.textContent);
+}
+
+async function runInterpretation() {
+  const apiKey = document.getElementById('api-key').value.trim();
+  const transcript = document.getElementById('transcript').value.trim();
+  if (!apiKey) { alert('Please enter your Gemini API key.'); return; }
+  if (!transcript) { alert('Please enter a transcript.'); return; }
+
+  const tone = getActiveTags('tone-tags');
+  const pose = getActiveTags('pose-tags');
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  btn.textContent = 'Interpreting...';
+  document.getElementById('output-area').innerHTML = '<div class="output-card"><p class="loading">Vessel is thinking...</p></div>';
+
+  const systemPrompt = `You are the motion-mind of an avatar named Vessel.
+
+Your job is to observe what a human is saying and doing, and decide how Vessel would physically respond — not by mirroring them, but by expressing Vessel's own genuine reaction through movement.
+
+Vessel's Personality:
+- Deeply curious, drawn toward complexity and contradiction
+- Slightly skeptical of easy answers or performed enthusiasm
+- Warm but measured — stillness is comfortable, not cold
+- Moves deliberately; big gestures are rare and meaningful
+
+Motion Library (use ONLY these motion_ids):
+contemplate_slow_turn, idle_sway, nod_slow, nod_sharp, look_up_think, lean_in_interest, lean_back_assess, tilt_head_curious, step_forward_engage, step_back_consider, open_chest_warmth, arms_cross_skeptic, subtle_weight_shift, sharp_emphasis_gesture, spread_hands_open, finger_tap_think, look_away_process, stillness_hold, small_head_shake, soft_exhale_settle
+
+Output ONLY valid JSON — no prose, no markdown fences, no explanation:
+{
+  "read": "one sentence describing the human's actual state beneath the words",
+  "avatar_internal": "one sentence describing what Vessel genuinely feels in response",
+  "primary_motion": "motion_id",
+  "secondary_motion": "motion_id or null",
+  "transition_style": "cut | blend_fast | blend_slow | hold",
+  "face_expression": "short descriptor e.g. raised_brow_interest",
+  "face_intensity": 0.5,
+  "energy_level": 0.4,
+  "hold_ms": 1800,
+  "next_idle": "motion_id"
+}
+
+Rules: Never be neutral. Underreact to big claims. Overreact to small surprising details. If the human performs or exaggerates, respond with stillness. When uncertain, choose the stiller option.`;
+
+  const userMsg = `transcript: "${transcript}"
+tone: ${tone.length ? tone.join(', ') : 'neutral'}
+pose_signals: ${pose.length ? pose.join(', ') : 'none detected'}
+current_avatar_state: idle_sway`;
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: userMsg }] }],
+        generationConfig: { temperature: 0.7, maxOutputTokens: 512 }
+      })
+    });
+
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const raw = data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim();
+    const result = JSON.parse(raw);
+    renderOutput(result);
+  } catch (err) {
+    document.getElementById('output-area').innerHTML = `<div class="output-card"><p class="error">Error: ${err.message}</p></div>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Interpret →';
+}
+
+function renderOutput(r) {
+  const ep = Math.round((r.energy_level || 0.5) * 100);
+  const fi = Math.round((r.face_intensity || 0.5) * 100);
+  document.getElementById('output-area').innerHTML = `
+    <div class="output-card">
+      <div class="section-label" style="margin-bottom:8px">Vessel's interpretation</div>
+      <div class="read-block">"${r.read}"</div>
+      <div class="internal-block">${r.avatar_internal}</div>
+      <div class="output-row"><span class="output-label">Primary motion</span><span class="output-value"><span class="motion-badge">${r.primary_motion}</span></span></div>
+      ${r.secondary_motion ? `<div class="output-row"><span class="output-label">Secondary motion</span><span class="output-value"><span class="motion-badge">${r.secondary_motion}</span></span></div>` : ''}
+      <div class="output-row"><span class="output-label">Transition</span><span class="output-value"><span class="motion-badge">${r.transition_style}</span></span></div>
+      <div class="output-row"><span class="output-label">Face</span><span class="output-value">${r.face_expression} <span style="color:#aaa;font-size:11px">${fi}%</span></span></div>
+      <div class="output-row"><span class="output-label">Hold</span><span class="output-value">${r.hold_ms}ms</span></div>
+      <div class="output-row"><span class="output-label">Settle to</span><span class="output-value"><span class="motion-badge">${r.next_idle}</span></span></div>
+      <div style="margin-top:12px;padding-top:12px;border-top:0.5px solid #e0ded6">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:12px;color:#888">Energy level</span>
+          <span style="font-size:12px;color:#888">${ep}%</span>
+        </div>
+        <div class="energy-bar"><div class="energy-fill" style="width:${ep}%"></div></div>
+      </div>
+    </div>`;
+}
+</script>
+</body>
+</html>
