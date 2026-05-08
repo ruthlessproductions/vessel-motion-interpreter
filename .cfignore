@@ -3,3 +3,4 @@ lean/
 salsa_motion/
 blender_render.py
 wrangler.toml
+.dev.vars

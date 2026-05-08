@@ -114,6 +114,14 @@
   </div>
 </div>
 
+<!-- Camera -->
+<div class="card" style="padding: 0.75rem 1.25rem">
+  <div class="cam-row" style="margin-top:0">
+    <button class="cam-btn" id="cam-btn" onclick="toggleCamera()">◎ Enable camera</button>
+    <span class="cam-reading" id="cam-reading"></span>
+  </div>
+</div>
+
 <!-- Clip Library -->
 <details class="card">
   <summary class="section-label">
@@ -159,11 +167,7 @@
       <span class="tag" onclick="manualToggle(this)">still</span>
     </div>
   </div>
-  <div class="cam-row">
-    <button class="cam-btn" id="cam-btn" onclick="toggleCamera()">◎ Enable camera</button>
-    <span class="cam-reading" id="cam-reading"></span>
-  </div>
-  <button class="run-btn" id="run-btn" style="margin-top:12px" onclick="runInterpretation()">Interpret →</button>
+  <button class="run-btn" id="run-btn" style="margin-top:4px" onclick="runInterpretation()">Interpret →</button>
 </div>
 
 <div id="output-area"></div>
