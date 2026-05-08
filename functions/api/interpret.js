@@ -22,7 +22,13 @@ export async function onRequestPost(context) {
     body: JSON.stringify(body),
   });
 
-  const data = await upstream.json();
+  const text = await upstream.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return json({ error: `Gemini returned non-JSON (status ${upstream.status}): ${text.slice(0, 300)}` }, 502);
+  }
   return json(data, upstream.status);
 }
 
