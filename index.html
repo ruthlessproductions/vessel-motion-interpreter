@@ -246,19 +246,29 @@ let idleTimer = null;
 const FADE = { cut: 0, blend_fast: 180, blend_slow: 700, hold: 0 };
 
 function crossfade(url, transitionStyle, loop, energyLevel) {
-  back.src = url;
+  const duration = FADE[transitionStyle] ?? 180;
   back.loop = loop;
   back.playbackRate = 0.75 + energyLevel * 0.6;
-  back.play().catch(() => {});
-  const duration = FADE[transitionStyle] ?? 180;
-  if (transitionStyle === 'hold') {
-    front.onended = () => { swap(0); front.onended = null; };
+  back.src = url;
+
+  const go = () => {
+    back.oncanplay = null;
+    back.play().catch(() => {});
+    if (transitionStyle === 'hold') {
+      front.onended = () => { swap(0); front.onended = null; };
+    } else {
+      back.style.transition = `opacity ${duration}ms ease`;
+      front.style.transition = `opacity ${duration}ms ease`;
+      back.style.opacity = 1;
+      front.style.opacity = 0;
+      swap(duration);
+    }
+  };
+
+  if (back.readyState >= 3) {
+    go();
   } else {
-    back.style.transition = `opacity ${duration}ms ease`;
-    front.style.transition = `opacity ${duration}ms ease`;
-    back.style.opacity = 1;
-    front.style.opacity = 0;
-    swap(duration);
+    back.oncanplay = go;
   }
 }
 
@@ -272,6 +282,7 @@ function resolveClip(motionId) {
 }
 
 function playMotion(motionId, transitionStyle, holdMs, nextIdle, energyLevel, isIdle = false) {
+  if (!cameraActive) return;
   clearTimeout(idleTimer);
   const resolvedId = resolveClip(motionId);
   document.getElementById('placeholder-motion').textContent = motionId;
@@ -364,6 +375,12 @@ function stopCamera() {
   cameraActive = false;
   clearInterval(detectTimer);
   clearInterval(autoInterpretTimer);
+  clearTimeout(idleTimer);
+  front.pause(); back.pause();
+  front.src = ''; back.src = '';
+  front.style.opacity = 0; back.style.opacity = 0;
+  document.getElementById('player-placeholder').style.display = 'flex';
+  document.getElementById('motion-overlay').style.display = 'none';
   if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
   camVideo.srcObject = null;
   camBtn.textContent = '◎ Enable camera';
