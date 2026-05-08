@@ -260,11 +260,19 @@ function crossfade(url, transitionStyle, loop, energyLevel) {
 
 function swap(delay) { setTimeout(() => { [front, back] = [back, front]; }, delay); }
 
+function resolveClip(motionId) {
+  if (clips[motionId]) return motionId;
+  const loaded = Object.keys(clips);
+  if (!loaded.length) return null;
+  return loaded[Math.floor(Math.random() * loaded.length)];
+}
+
 function playMotion(motionId, transitionStyle, holdMs, nextIdle, energyLevel, isIdle = false) {
   clearTimeout(idleTimer);
+  const resolvedId = resolveClip(motionId);
   document.getElementById('placeholder-motion').textContent = motionId;
   document.getElementById('overlay-primary').textContent = motionId;
-  if (!clips[motionId]) {
+  if (!resolvedId) {
     front.style.opacity = 0; back.style.opacity = 0;
     front.pause(); back.pause();
     document.getElementById('player-placeholder').style.display = 'flex';
@@ -274,7 +282,7 @@ function playMotion(motionId, transitionStyle, holdMs, nextIdle, energyLevel, is
   }
   document.getElementById('player-placeholder').style.display = 'none';
   document.getElementById('motion-overlay').style.display = 'flex';
-  crossfade(clips[motionId], transitionStyle, isIdle, energyLevel);
+  crossfade(clips[resolvedId], transitionStyle, isIdle, energyLevel);
   if (!isIdle) idleTimer = setTimeout(() => playMotion(nextIdle, 'blend_slow', 0, nextIdle, energyLevel, true), holdMs);
 }
 
