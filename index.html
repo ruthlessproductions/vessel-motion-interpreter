@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Avatar Motion Interpreter</title>
+<title>Vessel — Motion Interpreter</title>
+<script type="importmap">
+{ "imports": { "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs" } }
+</script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, sans-serif; background: #f5f4f0; color: #1a1a18; padding: 2rem; max-width: 720px; margin: 0 auto; }
@@ -15,8 +18,9 @@
   textarea { width: 100%; min-height: 80px; resize: vertical; font-family: inherit; font-size: 14px; padding: 10px 12px; border: 0.5px solid #ccc; border-radius: 8px; background: #faf9f7; color: #1a1a18; }
   textarea:focus { outline: none; border-color: #999; }
   .tag-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-  .tag { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 0.5px solid #ddd; cursor: pointer; color: #666; background: white; user-select: none; }
+  .tag { font-size: 12px; padding: 4px 10px; border-radius: 20px; border: 0.5px solid #ddd; cursor: pointer; color: #666; background: white; user-select: none; transition: border-color 0.15s; }
   .tag.active { background: #f0eeea; color: #1a1a18; border-color: #aaa; font-weight: 500; }
+  .tag.cam-set { border-color: #888; border-style: dashed; }
   .preset-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1rem; }
   .preset-btn { font-size: 12px; padding: 5px 12px; border-radius: 20px; border: 0.5px solid #ddd; cursor: pointer; background: white; color: #666; }
   .preset-btn:hover { background: #f5f4f0; color: #1a1a18; }
@@ -34,114 +38,483 @@
   .energy-bar { height: 5px; border-radius: 3px; background: #e0ded6; margin-top: 6px; }
   .energy-fill { height: 100%; border-radius: 3px; background: #888; }
   .loading { color: #888; font-size: 13px; }
-  .api-key-row { display: flex; gap: 8px; margin-bottom: 4px; }
-  .api-key-row input { flex: 1; padding: 8px 12px; font-size: 13px; border: 0.5px solid #ccc; border-radius: 8px; font-family: monospace; background: #faf9f7; color: #1a1a18; }
-  .api-note { font-size: 11px; color: #aaa; }
+
   .error { color: #c0392b; font-size: 13px; }
+
+  /* Video player */
+  .player-wrap { position: relative; width: 100%; aspect-ratio: 3/4; max-height: 480px; background: #111; border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+  .player-vid { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
+  .player-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  .placeholder-ring { width: 56px; height: 56px; border-radius: 50%; border: 0.5px solid #2a2a28; display: flex; align-items: center; justify-content: center; font-size: 22px; color: #333; }
+  .placeholder-motion { font-size: 11px; font-family: monospace; color: #3a3a38; letter-spacing: 0.05em; }
+  .motion-overlay { position: absolute; bottom: 10px; left: 10px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .motion-pill { font-size: 10px; font-family: monospace; padding: 3px 8px; border-radius: 20px; background: rgba(0,0,0,0.55); color: rgba(255,255,255,0.85); border: 0.5px solid rgba(255,255,255,0.1); backdrop-filter: blur(4px); }
+  .motion-pill.dim { opacity: 0.6; }
+  .player-footer { display: flex; justify-content: space-between; align-items: center; }
+  .player-status { font-size: 11px; color: #aaa; }
+
+  /* Camera pip */
+  .cam-pip { position: absolute; top: 10px; right: 10px; width: 80px; height: 107px; border-radius: 6px; overflow: hidden; border: 0.5px solid rgba(255,255,255,0.15); display: none; background: #000; }
+  .cam-pip video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  .cam-pip-indicator { position: absolute; top: 5px; left: 5px; width: 6px; height: 6px; border-radius: 50%; background: #e05; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* Camera controls */
+  .cam-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .cam-btn { font-size: 12px; padding: 5px 12px; border-radius: 20px; border: 0.5px solid #ddd; cursor: pointer; background: white; color: #666; flex-shrink: 0; }
+  .cam-btn:hover { background: #f5f4f0; }
+  .cam-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .cam-btn.active { border-color: #888; color: #1a1a18; background: #f0eeea; }
+  .cam-reading { font-size: 11px; color: #aaa; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+  /* Clip library */
+  details.card > summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; margin-bottom: 0; }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary .toggle-icon { font-size: 11px; color: #bbb; }
+  details[open].card > summary { margin-bottom: 12px; }
+  .clip-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  .clip-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 0.5px solid #ece9e3; border-radius: 8px; cursor: pointer; transition: background 0.1s; }
+  .clip-item:hover { background: #faf9f7; }
+  .clip-item.loaded { border-color: #c8c4bc; background: #f8f6f2; }
+  .clip-dot { width: 6px; height: 6px; border-radius: 50%; background: #ddd; flex-shrink: 0; }
+  .clip-item.loaded .clip-dot { background: #777; }
+  .clip-name { font-size: 11px; font-family: monospace; color: #bbb; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .clip-item.loaded .clip-name { color: #1a1a18; }
+  .clip-action { font-size: 12px; color: #ccc; flex-shrink: 0; }
+  .clip-item.loaded .clip-action { color: #999; }
+  .clip-count { font-size: 11px; color: #bbb; font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 6px; }
 </style>
 </head>
 <body>
 
-<h1>Avatar Motion Interpreter</h1>
-<p class="subtitle">Test how Vessel interprets your words and body language — powered by Gemini 2.5 Flash</p>
+<h1>Vessel — Motion Interpreter</h1>
+<p class="subtitle">Vessel reacts to your presence — powered by Gemini 2.5 Flash</p>
 
+<!-- Video Player -->
 <div class="card">
-  <div class="section-label">Gemini API Key</div>
-  <div class="api-key-row">
-    <input type="password" id="api-key" placeholder="AIza..." />
+  <div class="section-label" style="margin-bottom:10px">Vessel</div>
+  <div class="player-wrap">
+    <video id="player-a" class="player-vid" playsinline></video>
+    <video id="player-b" class="player-vid" playsinline></video>
+    <div class="player-placeholder" id="player-placeholder">
+      <div class="placeholder-ring">◎</div>
+      <span class="placeholder-motion" id="placeholder-motion">waiting</span>
+    </div>
+    <div class="motion-overlay" id="motion-overlay" style="display:none">
+      <span class="motion-pill" id="overlay-primary"></span>
+      <span class="motion-pill dim" id="overlay-secondary" style="display:none"></span>
+    </div>
+    <div class="cam-pip" id="cam-pip">
+      <video id="cam-video" autoplay playsinline muted></video>
+      <div class="cam-pip-indicator"></div>
+    </div>
   </div>
-  <p class="api-note">Used only in this browser session. Never shared or stored.</p>
+  <div class="player-footer">
+    <span class="player-status" id="player-status">No clips loaded</span>
+  </div>
 </div>
 
+<!-- Clip Library -->
+<details class="card">
+  <summary class="section-label">
+    Clip library<span class="clip-count" id="clip-count">0 / 20</span>
+    <span class="toggle-icon">▾</span>
+  </summary>
+  <div class="clip-grid" id="clip-grid"></div>
+</details>
+
+<!-- Input -->
 <div class="card">
-  <div class="section-label" style="margin-bottom: 10px;">Presets</div>
-  <div class="preset-row">
-    <button class="preset-btn" onclick="loadPreset('excited')">Excited pitch</button>
-    <button class="preset-btn" onclick="loadPreset('doubt')">Expressing doubt</button>
-    <button class="preset-btn" onclick="loadPreset('quiet')">Quiet confession</button>
-    <button class="preset-btn" onclick="loadPreset('challenge')">Challenging idea</button>
-    <button class="preset-btn" onclick="loadPreset('ramble')">Rambling thought</button>
-  </div>
-
   <div class="input-group">
-    <div class="section-label">What you said</div>
-    <textarea id="transcript" placeholder="e.g. I think this could actually change everything..."></textarea>
-  </div>
-
-  <div class="input-group">
-    <div class="section-label">Vocal tone</div>
+    <div class="section-label">
+      Vocal tone
+      <span id="tone-cam-label" style="display:none;margin-left:6px;font-size:10px;color:#888;font-weight:400;text-transform:none;letter-spacing:0">◉ camera</span>
+    </div>
     <div class="tag-grid" id="tone-tags">
-      <span class="tag" onclick="toggleTag(this)">fast</span>
-      <span class="tag" onclick="toggleTag(this)">slow</span>
-      <span class="tag" onclick="toggleTag(this)">excited</span>
-      <span class="tag" onclick="toggleTag(this)">flat</span>
-      <span class="tag" onclick="toggleTag(this)">hushed</span>
-      <span class="tag" onclick="toggleTag(this)">clipped</span>
-      <span class="tag" onclick="toggleTag(this)">wavering</span>
-      <span class="tag" onclick="toggleTag(this)">measured</span>
+      <span class="tag" onclick="manualToggle(this)">fast</span>
+      <span class="tag" onclick="manualToggle(this)">slow</span>
+      <span class="tag" onclick="manualToggle(this)">excited</span>
+      <span class="tag" onclick="manualToggle(this)">flat</span>
+      <span class="tag" onclick="manualToggle(this)">hushed</span>
+      <span class="tag" onclick="manualToggle(this)">clipped</span>
+      <span class="tag" onclick="manualToggle(this)">wavering</span>
+      <span class="tag" onclick="manualToggle(this)">measured</span>
     </div>
   </div>
-
   <div class="input-group">
-    <div class="section-label">Body signals</div>
+    <div class="section-label">
+      Body signals
+      <span id="pose-cam-label" style="display:none;margin-left:6px;font-size:10px;color:#888;font-weight:400;text-transform:none;letter-spacing:0">◉ camera</span>
+    </div>
     <div class="tag-grid" id="pose-tags">
-      <span class="tag" onclick="toggleTag(this)">leaning forward</span>
-      <span class="tag" onclick="toggleTag(this)">leaning back</span>
-      <span class="tag" onclick="toggleTag(this)">wide gestures</span>
-      <span class="tag" onclick="toggleTag(this)">minimal movement</span>
-      <span class="tag" onclick="toggleTag(this)">head tilt</span>
-      <span class="tag" onclick="toggleTag(this)">looking away</span>
-      <span class="tag" onclick="toggleTag(this)">pointing</span>
-      <span class="tag" onclick="toggleTag(this)">hands open</span>
-      <span class="tag" onclick="toggleTag(this)">fidgeting</span>
-      <span class="tag" onclick="toggleTag(this)">still</span>
+      <span class="tag" onclick="manualToggle(this)">leaning forward</span>
+      <span class="tag" onclick="manualToggle(this)">leaning back</span>
+      <span class="tag" onclick="manualToggle(this)">wide gestures</span>
+      <span class="tag" onclick="manualToggle(this)">minimal movement</span>
+      <span class="tag" onclick="manualToggle(this)">head tilt</span>
+      <span class="tag" onclick="manualToggle(this)">looking away</span>
+      <span class="tag" onclick="manualToggle(this)">pointing</span>
+      <span class="tag" onclick="manualToggle(this)">hands open</span>
+      <span class="tag" onclick="manualToggle(this)">fidgeting</span>
+      <span class="tag" onclick="manualToggle(this)">still</span>
     </div>
   </div>
-
-  <button class="run-btn" id="run-btn" onclick="runInterpretation()">Interpret →</button>
+  <div class="cam-row">
+    <button class="cam-btn" id="cam-btn" onclick="toggleCamera()">◎ Enable camera</button>
+    <span class="cam-reading" id="cam-reading"></span>
+  </div>
+  <button class="run-btn" id="run-btn" style="margin-top:12px" onclick="runInterpretation()">Interpret →</button>
 </div>
 
 <div id="output-area"></div>
 
-<script>
-const presets = {
-  excited:   { transcript: "Okay so I've been thinking about this for weeks and I genuinely think we're onto something that nobody has done before — like, the combination alone is new.", tone: ["fast","excited"], pose: ["leaning forward","wide gestures"] },
-  doubt:     { transcript: "I mean... it could work. I just don't know if the timing is right. There are a lot of moving parts.", tone: ["slow","wavering"], pose: ["leaning back","looking away"] },
-  quiet:     { transcript: "Honestly I wasn't sure whether to bring this up, but I think it matters. It's been bothering me.", tone: ["hushed","slow"], pose: ["minimal movement","still"] },
-  challenge: { transcript: "But that assumes the existing model is correct. What if it isn't? What if we're optimizing for the wrong thing entirely?", tone: ["clipped","measured"], pose: ["leaning forward","pointing"] },
-  ramble:    { transcript: "So it started as one thing and then kind of became another thing and now I'm not totally sure what it is but it feels important, does that make sense?", tone: ["fast","wavering"], pose: ["wide gestures","head tilt","fidgeting"] }
-};
+<script type="module">
+import { FaceLandmarker, PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
 
-function loadPreset(key) {
-  const p = presets[key];
-  document.getElementById('transcript').value = p.transcript;
-  document.querySelectorAll('.tag').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('#tone-tags .tag').forEach(t => { if (p.tone.includes(t.textContent)) t.classList.add('active'); });
-  document.querySelectorAll('#pose-tags .tag').forEach(t => { if (p.pose.includes(t.textContent)) t.classList.add('active'); });
+// ── Clip registry ──────────────────────────────────────────────────────────
+const MOTION_IDS = [
+  'contemplate_slow_turn','idle_sway','nod_slow','nod_sharp','look_up_think',
+  'lean_in_interest','lean_back_assess','tilt_head_curious','step_forward_engage',
+  'step_back_consider','open_chest_warmth','arms_cross_skeptic','subtle_weight_shift',
+  'sharp_emphasis_gesture','spread_hands_open','finger_tap_think','look_away_process',
+  'stillness_hold','small_head_shake','soft_exhale_settle'
+];
+
+const clips = {};
+
+async function autoLoadClips() {
+  await Promise.all(MOTION_IDS.map(async id => {
+    for (const ext of ['mp4', 'webm', 'mov']) {
+      const url = `clips/${id}.${ext}`;
+      try {
+        const res = await fetch(url, { method: 'HEAD' });
+        if (res.ok) { clips[id] = url; break; }
+      } catch { /* not found */ }
+    }
+  }));
+  buildClipGrid();
 }
 
-function toggleTag(el) { el.classList.toggle('active'); }
+function buildClipGrid() {
+  const grid = document.getElementById('clip-grid');
+  grid.innerHTML = '';
+  MOTION_IDS.forEach(id => {
+    const el = document.createElement('div');
+    el.className = 'clip-item' + (clips[id] ? ' loaded' : '');
+    el.id = `clip-${id}`;
+    el.innerHTML = `<div class="clip-dot"></div><span class="clip-name">${id}</span><span class="clip-action">${clips[id] ? '✕' : '+'}</span>`;
+    el.onclick = () => clips[id] ? removeClip(id) : uploadClip(id);
+    grid.appendChild(el);
+  });
+  const count = Object.keys(clips).length;
+  document.getElementById('clip-count').textContent = `${count} / ${MOTION_IDS.length}`;
+  document.getElementById('player-status').textContent =
+    count === 0 ? 'No clips loaded' :
+    count === MOTION_IDS.length ? 'All clips loaded' :
+    `${count} / ${MOTION_IDS.length} clips loaded`;
+}
+
+function uploadClip(id) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'video/*';
+  input.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (clips[id]) URL.revokeObjectURL(clips[id]);
+    clips[id] = URL.createObjectURL(file);
+    buildClipGrid();
+  };
+  input.click();
+}
+
+function removeClip(id) {
+  if (clips[id]) URL.revokeObjectURL(clips[id]);
+  delete clips[id];
+  buildClipGrid();
+}
+
+// ── Video player ───────────────────────────────────────────────────────────
+const vidA = document.getElementById('player-a');
+const vidB = document.getElementById('player-b');
+let front = vidA, back = vidB;
+let idleTimer = null;
+const FADE = { cut: 0, blend_fast: 180, blend_slow: 700, hold: 0 };
+
+function crossfade(url, transitionStyle, loop, energyLevel) {
+  back.src = url;
+  back.loop = loop;
+  back.playbackRate = 0.75 + energyLevel * 0.6;
+  back.play().catch(() => {});
+  const duration = FADE[transitionStyle] ?? 180;
+  if (transitionStyle === 'hold') {
+    front.onended = () => { swap(0); front.onended = null; };
+  } else {
+    back.style.transition = `opacity ${duration}ms ease`;
+    front.style.transition = `opacity ${duration}ms ease`;
+    back.style.opacity = 1;
+    front.style.opacity = 0;
+    swap(duration);
+  }
+}
+
+function swap(delay) { setTimeout(() => { [front, back] = [back, front]; }, delay); }
+
+function playMotion(motionId, transitionStyle, holdMs, nextIdle, energyLevel, isIdle = false) {
+  clearTimeout(idleTimer);
+  document.getElementById('placeholder-motion').textContent = motionId;
+  document.getElementById('overlay-primary').textContent = motionId;
+  if (!clips[motionId]) {
+    front.style.opacity = 0; back.style.opacity = 0;
+    front.pause(); back.pause();
+    document.getElementById('player-placeholder').style.display = 'flex';
+    document.getElementById('motion-overlay').style.display = 'none';
+    if (!isIdle) idleTimer = setTimeout(() => playMotion(nextIdle, 'blend_slow', 0, nextIdle, energyLevel, true), holdMs);
+    return;
+  }
+  document.getElementById('player-placeholder').style.display = 'none';
+  document.getElementById('motion-overlay').style.display = 'flex';
+  crossfade(clips[motionId], transitionStyle, isIdle, energyLevel);
+  if (!isIdle) idleTimer = setTimeout(() => playMotion(nextIdle, 'blend_slow', 0, nextIdle, energyLevel, true), holdMs);
+}
+
+function triggerFromResult(r) {
+  const sec = document.getElementById('overlay-secondary');
+  if (r.secondary_motion) { sec.textContent = r.secondary_motion; sec.style.display = 'inline'; }
+  else { sec.style.display = 'none'; }
+  playMotion(r.primary_motion, r.transition_style, r.hold_ms, r.next_idle, r.energy_level ?? 0.5, false);
+}
+
+// ── Camera & detection ─────────────────────────────────────────────────────
+let cameraActive = false;
+let faceLandmarker = null;
+let poseLandmarker = null;
+let cameraStream = null;
+let detectTimer = null;
+let autoInterpretTimer = null;
+let isInterpreting = false;
+let poseHistory = [];
+let faceBaseline = null;
+const manualOverrides = new Set();
+const AUTO_INTERVAL_MS = 5000;
+
+const camVideo = document.getElementById('cam-video');
+const camBtn = document.getElementById('cam-btn');
+const camPip = document.getElementById('cam-pip');
+const camReading = document.getElementById('cam-reading');
+
+async function initMediaPipe() {
+  camReading.textContent = 'Loading models...';
+  const wasm = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+  const resolver = await FilesetResolver.forVisionTasks(wasm);
+  [faceLandmarker, poseLandmarker] = await Promise.all([
+    FaceLandmarker.createFromOptions(resolver, {
+      baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task', delegate: 'GPU' },
+      outputFaceBlendshapes: true,
+      runningMode: 'VIDEO',
+      numFaces: 1
+    }),
+    PoseLandmarker.createFromOptions(resolver, {
+      baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate: 'GPU' },
+      runningMode: 'VIDEO',
+      numPoses: 1
+    })
+  ]);
+}
+
+async function toggleCamera() {
+  if (cameraActive) { stopCamera(); return; }
+  camBtn.disabled = true;
+  camBtn.textContent = '◎ Starting...';
+  try {
+    if (!faceLandmarker) await initMediaPipe();
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 320, height: 240 } });
+    camVideo.srcObject = cameraStream;
+    await camVideo.play();
+    cameraActive = true;
+    camBtn.textContent = '◉ Camera on';
+    camBtn.classList.add('active');
+    camPip.style.display = 'block';
+    document.getElementById('tone-cam-label').style.display = 'inline';
+    document.getElementById('pose-cam-label').style.display = 'inline';
+    detectTimer = setInterval(runDetection, 500);
+    autoInterpretTimer = setInterval(() => {
+      if (!isInterpreting) runInterpretation(true);
+    }, AUTO_INTERVAL_MS);
+  } catch (err) {
+    camReading.textContent = 'Camera error: ' + err.message;
+    camBtn.textContent = '◎ Enable camera';
+  }
+  camBtn.disabled = false;
+}
+
+function stopCamera() {
+  cameraActive = false;
+  clearInterval(detectTimer);
+  clearInterval(autoInterpretTimer);
+  if (cameraStream) { cameraStream.getTracks().forEach(t => t.stop()); cameraStream = null; }
+  camVideo.srcObject = null;
+  camBtn.textContent = '◎ Enable camera';
+  camBtn.classList.remove('active');
+  camPip.style.display = 'none';
+  camReading.textContent = '';
+  document.getElementById('tone-cam-label').style.display = 'none';
+  document.getElementById('pose-cam-label').style.display = 'none';
+  document.querySelectorAll('.tag.cam-set').forEach(t => t.classList.remove('cam-set'));
+  poseHistory = [];
+  faceBaseline = null;
+  manualOverrides.clear();
+}
+
+function runDetection() {
+  if (!cameraActive || camVideo.readyState < 2) return;
+  const now = performance.now();
+  const faceResult = faceLandmarker.detectForVideo(camVideo, now);
+  const poseResult = poseLandmarker.detectForVideo(camVideo, now);
+  applyDetections(faceResult, poseResult);
+}
+
+function getBS(categories, name) {
+  return categories.find(c => c.categoryName === name)?.score ?? 0;
+}
+
+function applyDetections(faceResult, poseResult) {
+  const toneTags = new Set();
+  const poseTags = new Set();
+
+  if (faceResult.faceBlendshapes?.length > 0) {
+    const cats = faceResult.faceBlendshapes[0].categories;
+    const g = name => getBS(cats, name);
+
+    const smile = (g('mouthSmileLeft') + g('mouthSmileRight')) / 2;
+    const browDown = (g('browDownLeft') + g('browDownRight')) / 2;
+    const browInnerUp = g('browInnerUp');
+    const jawOpen = g('jawOpen');
+    const eyeSquint = (g('eyeSquintLeft') + g('eyeSquintRight')) / 2;
+    const expressionPeak = Math.max(smile, browDown, browInnerUp, jawOpen);
+
+    if (smile > 0.2 || jawOpen > 0.25) toneTags.add('excited');
+    if (browDown > 0.3 || eyeSquint > 0.35) toneTags.add('clipped');
+    if (browInnerUp > 0.2 && smile < 0.12) toneTags.add('wavering');
+    if (expressionPeak < 0.08) toneTags.add('flat');
+    else if (expressionPeak < 0.15 && !toneTags.has('excited') && !toneTags.has('clipped')) toneTags.add('measured');
+  }
+
+  if (faceResult.faceLandmarks?.length > 0) {
+    const lm = faceResult.faceLandmarks[0];
+    // Head tilt: y difference between temples
+    if (Math.abs(lm[234].y - lm[454].y) > 0.04) poseTags.add('head tilt');
+    // Looking away: nose x deviation from center
+    if (Math.abs(lm[4].x - 0.5) > 0.09) poseTags.add('looking away');
+    // Lean: inter-eye distance relative to baseline
+    const eyeDist = Math.abs(lm[263].x - lm[33].x);
+    if (faceBaseline === null) { faceBaseline = eyeDist; }
+    else {
+      const ratio = eyeDist / faceBaseline;
+      if (ratio > 1.13) poseTags.add('leaning forward');
+      else if (ratio < 0.87) poseTags.add('leaning back');
+    }
+  }
+
+  if (poseResult.landmarks?.length > 0) {
+    const lm = poseResult.landmarks[0];
+    const lShoulder = lm[11], rShoulder = lm[12];
+    const lWrist = lm[15], rWrist = lm[16];
+    const lHip = lm[23], rHip = lm[24];
+
+    if (lShoulder && rShoulder && lWrist && rWrist) {
+      const midX = (lShoulder.x + rShoulder.x) / 2;
+      const sw = Math.abs(rShoulder.x - lShoulder.x);
+      const lDev = Math.abs(lWrist.x - midX);
+      const rDev = Math.abs(rWrist.x - midX);
+
+      if (lDev > sw * 0.8 || rDev > sw * 0.8) poseTags.add('wide gestures');
+      if (lDev > sw * 1.2 || rDev > sw * 1.2) poseTags.add('pointing');
+
+      if (lHip && rHip) {
+        const hipY = (lHip.y + rHip.y) / 2;
+        if (Math.abs(lWrist.y - hipY) < 0.12 && Math.abs(rWrist.y - hipY) < 0.12) poseTags.add('hands open');
+      }
+
+      // Movement over time
+      const frame = lm.slice(11, 25).map(l => [l.x, l.y]);
+      poseHistory.push(frame);
+      if (poseHistory.length > 8) poseHistory.shift();
+
+      if (poseHistory.length >= 4) {
+        const deltas = [];
+        for (let i = 1; i < poseHistory.length; i++) {
+          let d = 0;
+          for (let j = 0; j < frame.length; j++) {
+            d += Math.hypot(poseHistory[i][j][0] - poseHistory[i-1][j][0], poseHistory[i][j][1] - poseHistory[i-1][j][1]);
+          }
+          deltas.push(d / frame.length);
+        }
+        const avg = deltas.reduce((a, b) => a + b, 0) / deltas.length;
+        const variance = Math.max(...deltas) - Math.min(...deltas);
+        if (avg < 0.003) { poseTags.add('still'); poseTags.add('minimal movement'); }
+        else if (variance > 0.015) poseTags.add('fidgeting');
+        else if (avg < 0.008) poseTags.add('minimal movement');
+      }
+    }
+  }
+
+  setDetectedTags('tone-tags', toneTags);
+  setDetectedTags('pose-tags', poseTags);
+
+  const all = [...toneTags, ...poseTags];
+  camReading.textContent = all.length > 0 ? all.join(', ') : 'reading...';
+}
+
+function setDetectedTags(groupId, detected) {
+  document.querySelectorAll(`#${groupId} .tag`).forEach(tag => {
+    const text = tag.textContent.trim();
+    if (manualOverrides.has(text)) return; // respect manual toggle
+    if (detected.has(text)) {
+      tag.classList.add('active', 'cam-set');
+    } else {
+      tag.classList.remove('active', 'cam-set');
+    }
+  });
+}
+
+// ── Tag interaction ────────────────────────────────────────────────────────
+function manualToggle(el) {
+  const text = el.textContent.trim();
+  if (cameraActive) {
+    // Toggle manual override
+    if (manualOverrides.has(text)) {
+      manualOverrides.delete(text);
+      el.classList.remove('active');
+    } else {
+      manualOverrides.add(text);
+      el.classList.toggle('active');
+      el.classList.remove('cam-set');
+    }
+  } else {
+    el.classList.toggle('active');
+  }
+}
+
 
 function getActiveTags(id) {
-  return Array.from(document.querySelectorAll(`#${id} .tag.active`)).map(t => t.textContent);
+  return Array.from(document.querySelectorAll(`#${id} .tag.active`)).map(t => t.textContent.trim());
 }
 
-async function runInterpretation() {
-  const apiKey = document.getElementById('api-key').value.trim();
-  const transcript = document.getElementById('transcript').value.trim();
-  if (!apiKey) { alert('Please enter your Gemini API key.'); return; }
-  if (!transcript) { alert('Please enter a transcript.'); return; }
+// ── Interpretation ─────────────────────────────────────────────────────────
+async function runInterpretation(silent = false) {
 
   const tone = getActiveTags('tone-tags');
   const pose = getActiveTags('pose-tags');
   const btn = document.getElementById('run-btn');
+  isInterpreting = true;
   btn.disabled = true;
   btn.textContent = 'Interpreting...';
   document.getElementById('output-area').innerHTML = '<div class="output-card"><p class="loading">Vessel is thinking...</p></div>';
 
   const systemPrompt = `You are the motion-mind of an avatar named Vessel.
 
-Your job is to observe what a human is saying and doing, and decide how Vessel would physically respond — not by mirroring them, but by expressing Vessel's own genuine reaction through movement.
+Your job is to observe what a human is doing and feeling, and decide how Vessel would physically respond — not by mirroring them, but by expressing Vessel's own genuine reaction through movement.
 
 Vessel's Personality:
 - Deeply curious, drawn toward complexity and contradiction
@@ -152,9 +525,9 @@ Vessel's Personality:
 Motion Library (use ONLY these motion_ids):
 contemplate_slow_turn, idle_sway, nod_slow, nod_sharp, look_up_think, lean_in_interest, lean_back_assess, tilt_head_curious, step_forward_engage, step_back_consider, open_chest_warmth, arms_cross_skeptic, subtle_weight_shift, sharp_emphasis_gesture, spread_hands_open, finger_tap_think, look_away_process, stillness_hold, small_head_shake, soft_exhale_settle
 
-Output ONLY valid JSON — no prose, no markdown fences, no explanation:
+Output ONLY valid JSON:
 {
-  "read": "one sentence describing the human's actual state beneath the words",
+  "read": "one sentence describing the human's emotional/physical state",
   "avatar_internal": "one sentence describing what Vessel genuinely feels in response",
   "primary_motion": "motion_id",
   "secondary_motion": "motion_id or null",
@@ -168,33 +541,33 @@ Output ONLY valid JSON — no prose, no markdown fences, no explanation:
 
 Rules: Never be neutral. Underreact to big claims. Overreact to small surprising details. If the human performs or exaggerates, respond with stillness. When uncertain, choose the stiller option.`;
 
-  const userMsg = `transcript: "${transcript}"
-tone: ${tone.length ? tone.join(', ') : 'neutral'}
+  const userMsg = `tone: ${tone.length ? tone.join(', ') : 'neutral'}
 pose_signals: ${pose.length ? pose.join(', ') : 'none detected'}
 current_avatar_state: idle_sway`;
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-    const res = await fetch(url, {
+    const res = await fetch('/api/interpret', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: [{ text: userMsg }] }],
-        generationConfig: { temperature: 0.7, maxOutputTokens: 512 }
+        generationConfig: { temperature: 0.7, maxOutputTokens: 1024, responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } }
       })
     });
-
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
-
-    const raw = data.candidates[0].content.parts[0].text.replace(/```json|```/g, '').trim();
-    const result = JSON.parse(raw);
+    const text = data.candidates[0].content.parts[0].text;
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON found in response');
+    const result = JSON.parse(jsonMatch[0]);
+    triggerFromResult(result);
     renderOutput(result);
   } catch (err) {
     document.getElementById('output-area').innerHTML = `<div class="output-card"><p class="error">Error: ${err.message}</p></div>`;
   }
 
+  isInterpreting = false;
   btn.disabled = false;
   btn.textContent = 'Interpret →';
 }
@@ -222,6 +595,16 @@ function renderOutput(r) {
       </div>
     </div>`;
 }
+
+// ── Expose globals for onclick handlers ────────────────────────────────────
+window.manualToggle = manualToggle;
+window.toggleCamera = toggleCamera;
+window.runInterpretation = runInterpretation;
+window.uploadClip = uploadClip;
+window.removeClip = removeClip;
+
+// Init
+autoLoadClips();
 </script>
 </body>
 </html>
