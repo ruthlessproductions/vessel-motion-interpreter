@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Vessel — Motion Interpreter</title>
 <script type="importmap">
-{ "imports": { "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs" } }
+{ "imports": {
+    "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs",
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+} }
 </script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -40,6 +44,20 @@
   .loading { color: #888; font-size: 13px; }
 
   .error { color: #c0392b; font-size: 13px; }
+  .api-note { font-size: 11px; color: #aaa; }
+  .api-note code { font-size: 11px; background: #f0eeea; padding: 1px 4px; border-radius: 3px; }
+
+  /* Mode toggle */
+  .mode-toggle { display: flex; gap: 6px; margin-bottom: 1.5rem; }
+  .mode-btn { font-size: 13px; padding: 6px 16px; border-radius: 20px; border: 0.5px solid #ddd; cursor: pointer; background: white; color: #666; }
+  .mode-btn.active { background: #1a1a18; color: white; border-color: #1a1a18; }
+
+  /* React canvas */
+  .react-wrap { position: relative; width: 100%; aspect-ratio: 3/4; max-height: 480px; background: #111; border-radius: 8px; overflow: hidden; }
+  .react-wrap canvas { width: 100% !important; height: 100% !important; display: block; }
+  .avatar-url-row { display: flex; gap: 8px; margin-top: 10px; }
+  .avatar-url-row input { flex: 1; padding: 8px 12px; font-size: 12px; border: 0.5px solid #ccc; border-radius: 8px; font-family: monospace; background: #faf9f7; color: #1a1a18; }
+  .avatar-url-row button { font-size: 12px; padding: 6px 14px; border-radius: 8px; border: 0.5px solid #ccc; cursor: pointer; background: white; color: #1a1a18; white-space: nowrap; }
 
   /* Video player */
   .player-wrap { position: relative; width: 100%; aspect-ratio: 3/4; max-height: 480px; background: #111; border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
@@ -90,6 +108,11 @@
 <h1>Vessel — Motion Interpreter</h1>
 <p class="subtitle">Vessel reacts to your presence — powered by Gemini 2.5 Flash</p>
 
+<div class="mode-toggle">
+  <button class="mode-btn active" id="mode-btn-interpret" onclick="setMode('interpret')">Interpret</button>
+  <button class="mode-btn" id="mode-btn-react" onclick="setMode('react')">React</button>
+</div>
+
 <!-- Video Player -->
 <div class="card">
   <div class="section-label" style="margin-bottom:10px">Vessel</div>
@@ -112,6 +135,19 @@
   <div class="player-footer">
     <span class="player-status" id="player-status">No clips loaded</span>
   </div>
+</div>
+
+<!-- React mode player -->
+<div class="card" id="react-card" style="display:none">
+  <div class="section-label" style="margin-bottom:10px">Vessel — Live</div>
+  <div class="react-wrap">
+    <canvas id="react-canvas"></canvas>
+  </div>
+  <div class="avatar-url-row">
+    <input type="text" id="avatar-url" placeholder="Ready Player Me GLB URL  e.g. https://models.readyplayer.me/abc123.glb?morphTargets=ARKit" />
+    <button onclick="loadAvatar()">Load</button>
+  </div>
+  <p class="api-note" style="margin-top:6px">Create a free avatar at readyplayer.me → Copy link → add <code>?morphTargets=ARKit</code></p>
 </div>
 
 <!-- Camera -->
@@ -174,6 +210,113 @@
 
 <script type="module">
 import { FaceLandmarker, PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ── Mode ───────────────────────────────────────────────────────────────────
+let currentMode = 'interpret';
+
+function setMode(mode) {
+  currentMode = mode;
+  const isReact = mode === 'react';
+  document.getElementById('mode-btn-interpret').classList.toggle('active', !isReact);
+  document.getElementById('mode-btn-react').classList.toggle('active', isReact);
+  document.getElementById('react-card').style.display = isReact ? 'block' : 'none';
+  document.querySelector('.card:has(#player-a)').style.display = isReact ? 'none' : 'block';
+  document.querySelector('details.card').style.display = isReact ? 'none' : '';
+  document.getElementById('output-area').style.display = isReact ? 'none' : 'block';
+  document.getElementById('run-btn').style.display = isReact ? 'none' : 'block';
+  document.querySelectorAll('.input-group').forEach(g => g.style.display = isReact ? 'none' : 'block');
+  if (isReact && !threeRenderer) initThreeScene();
+}
+
+// ── Three.js / React mode ───────────────────────────────────────────────────
+let threeRenderer = null, threeScene, threeCamera, avatarMesh = null;
+
+function initThreeScene() {
+  const canvas = document.getElementById('react-canvas');
+  const w = canvas.parentElement.clientWidth;
+  const h = canvas.parentElement.clientHeight;
+
+  threeRenderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+  threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  threeRenderer.setSize(w, h);
+  threeRenderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  threeScene = new THREE.Scene();
+  threeScene.background = new THREE.Color(0x111111);
+
+  threeCamera = new THREE.PerspectiveCamera(28, w / h, 0.01, 100);
+  threeCamera.position.set(0, 1.62, 0.7);
+  threeCamera.lookAt(0, 1.58, 0);
+
+  const amb = new THREE.AmbientLight(0xffffff, 1.2);
+  threeScene.add(amb);
+  const key = new THREE.DirectionalLight(0xfff5e0, 2.5);
+  key.position.set(-1.2, 2.5, 2);
+  threeScene.add(key);
+  const fill = new THREE.DirectionalLight(0xe8eeff, 0.8);
+  fill.position.set(1.5, 1, 1.5);
+  threeScene.add(fill);
+
+  threeRenderer.setAnimationLoop(() => threeRenderer.render(threeScene, threeCamera));
+}
+
+async function loadAvatar() {
+  const url = document.getElementById('avatar-url').value.trim();
+  if (!url) return;
+  const btn = document.querySelector('#react-card .avatar-url-row button');
+  btn.textContent = 'Loading...';
+  btn.disabled = true;
+  try {
+    const loader = new GLTFLoader();
+    const gltf = await loader.loadAsync(url);
+    if (avatarMesh) { threeScene.remove(avatarMesh.parent || avatarMesh); }
+    threeScene.add(gltf.scene);
+    avatarMesh = null;
+    gltf.scene.traverse(node => {
+      if (node.isMesh && node.morphTargetDictionary && Object.keys(node.morphTargetDictionary).length > 10) {
+        avatarMesh = node;
+      }
+    });
+    btn.textContent = avatarMesh ? 'Loaded ✓' : 'No morph targets found';
+  } catch (err) {
+    btn.textContent = 'Error — check URL';
+    console.error(err);
+  }
+  btn.disabled = false;
+}
+
+function applyBlendshapesToAvatar(faceResult) {
+  if (!avatarMesh || !faceResult.faceBlendshapes?.length) return;
+  const cats = faceResult.faceBlendshapes[0].categories;
+  cats.forEach(({ categoryName, score }) => {
+    const idx = avatarMesh.morphTargetDictionary[categoryName];
+    if (idx !== undefined) avatarMesh.morphTargetInfluences[idx] = score;
+  });
+  // Head rotation from face landmarks
+  if (faceResult.faceLandmarks?.length) {
+    const lm = faceResult.faceLandmarks[0];
+    const tiltZ = (lm[234].y - lm[454].y) * 1.8;
+    const panY = (lm[4].x - 0.5) * -2.2;
+    const tiltX = (lm[4].y - 0.5) * 1.5;
+    gltf_applyHeadRotation(tiltX, panY, tiltZ);
+  }
+}
+
+function gltf_applyHeadRotation(x, y, z) {
+  if (!avatarMesh) return;
+  let node = avatarMesh.parent;
+  while (node) {
+    if (node.name?.toLowerCase().includes('head')) {
+      node.rotation.x = THREE.MathUtils.lerp(node.rotation.x, x, 0.15);
+      node.rotation.y = THREE.MathUtils.lerp(node.rotation.y, y, 0.15);
+      node.rotation.z = THREE.MathUtils.lerp(node.rotation.z, z, 0.15);
+      break;
+    }
+    node = node.parent;
+  }
+}
 
 // ── Clip registry ──────────────────────────────────────────────────────────
 const MOTION_IDS = [
@@ -245,8 +388,9 @@ let front = vidA, back = vidB;
 let idleTimer = null;
 const FADE = { cut: 0, blend_fast: 180, blend_slow: 700, hold: 0 };
 
-function crossfade(url, transitionStyle, loop, energyLevel) {
+function crossfade(url, transitionStyle, loop, energyLevel, onPlaying) {
   const duration = FADE[transitionStyle] ?? 180;
+  back.oncanplay = null;
   back.loop = loop;
   back.playbackRate = 0.75 + energyLevel * 0.6;
   back.src = url;
@@ -255,13 +399,14 @@ function crossfade(url, transitionStyle, loop, energyLevel) {
     back.oncanplay = null;
     back.play().catch(() => {});
     if (transitionStyle === 'hold') {
-      front.onended = () => { swap(0); front.onended = null; };
+      front.onended = () => { swap(0); front.onended = null; onPlaying?.(); };
     } else {
       back.style.transition = `opacity ${duration}ms ease`;
       front.style.transition = `opacity ${duration}ms ease`;
       back.style.opacity = 1;
       front.style.opacity = 0;
       swap(duration);
+      onPlaying?.();
     }
   };
 
@@ -300,8 +445,9 @@ function playMotion(motionId, transitionStyle, holdMs, nextIdle, energyLevel, is
   }
   document.getElementById('player-placeholder').style.display = 'none';
   document.getElementById('motion-overlay').style.display = 'flex';
-  crossfade(clips[resolvedId], transitionStyle, isIdle, energyLevel);
-  if (!isIdle) idleTimer = setTimeout(() => playMotion(nextIdle, 'blend_slow', 0, nextIdle, energyLevel, true), holdMs);
+  crossfade(clips[resolvedId], transitionStyle, isIdle, energyLevel, () => {
+    if (!isIdle) idleTimer = setTimeout(() => playMotion(nextIdle, 'blend_slow', 0, nextIdle, energyLevel, true), holdMs);
+  });
 }
 
 function triggerFromResult(r) {
@@ -363,9 +509,9 @@ async function toggleCamera() {
     camPip.style.display = 'block';
     document.getElementById('tone-cam-label').style.display = 'inline';
     document.getElementById('pose-cam-label').style.display = 'inline';
-    detectTimer = setInterval(runDetection, 500);
+    detectTimer = setInterval(runDetection, currentMode === 'react' ? 33 : 500);
     autoInterpretTimer = setInterval(() => {
-      if (!isInterpreting) runInterpretation(true);
+      if (currentMode === 'interpret' && !isInterpreting) runInterpretation(true);
     }, AUTO_INTERVAL_MS);
   } catch (err) {
     camReading.textContent = 'Camera error: ' + err.message;
@@ -401,6 +547,10 @@ function runDetection() {
   if (!cameraActive || camVideo.readyState < 2) return;
   const now = performance.now();
   const faceResult = faceLandmarker.detectForVideo(camVideo, now);
+  if (currentMode === 'react') {
+    applyBlendshapesToAvatar(faceResult);
+    return;
+  }
   const poseResult = poseLandmarker.detectForVideo(camVideo, now);
   applyDetections(faceResult, poseResult);
 }
@@ -629,6 +779,8 @@ function renderOutput(r) {
 
 // ── Expose globals for onclick handlers ────────────────────────────────────
 window.manualToggle = manualToggle;
+window.setMode = setMode;
+window.loadAvatar = loadAvatar;
 window.toggleCamera = toggleCamera;
 window.runInterpretation = runInterpretation;
 window.uploadClip = uploadClip;
